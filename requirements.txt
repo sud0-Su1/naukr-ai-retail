@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pandas
+duckdb
+pydantic
+python-dotenv
+pytest
+httpx
