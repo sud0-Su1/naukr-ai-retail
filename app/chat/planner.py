@@ -6,28 +6,25 @@ from app.chat.models import QueryPlan
 
 
 class PlannerError(Exception):
-    """Raised when the planner cannot produce a supported query plan."""
+    pass
 
 
 class MockPlanner:
     """
-    Deterministic planner used for tests/evaluation.
+    Deterministic planner used by tests/evaluation.
 
-    This deliberately supports a small set of known retail questions so
-    evaluation does not depend on an external LLM.
+    Supports a small set of known questions and a contextual East follow-up
+    so multi-turn behavior can be tested without requiring an LLM.
     """
 
-    def plan(self, question: str) -> QueryPlan:
-        q = question.strip().lower()
+    def plan(
+        self,
+        question: str,
+        context: dict | None = None,
+    ) -> QueryPlan:
+        normalized = question.strip().lower()
 
-        # ---------------------------------------------------------
-        # 1. Highest revenue category in the West
-        # ---------------------------------------------------------
-        if (
-            "highest revenue" in q
-            and "west" in q
-            and "category" in q
-        ):
+        if normalized == "which category generated the highest revenue in the west?":
             return QueryPlan(
                 intent="top_n",
                 dataset="canonical_retail",
@@ -52,16 +49,10 @@ class MockPlanner:
                         "dir": "desc",
                     }
                 ],
-                limit=10,
+                limit=1,
             )
 
-        # ---------------------------------------------------------
-        # 2. Revenue by category in the West
-        # ---------------------------------------------------------
-        if (
-            "revenue by category" in q
-            and "west" in q
-        ):
+        if normalized == "show revenue by category in the west.":
             return QueryPlan(
                 intent="aggregate",
                 dataset="canonical_retail",
@@ -89,13 +80,51 @@ class MockPlanner:
                 limit=10,
             )
 
-        raise PlannerError(
-            f"Mock planner does not support this question: {question}"
-        )
+        if normalized == "what about the east?":
+            if not context or not context.get("has_previous_turn"):
+                raise PlannerError(
+                    "The question refers to a previous turn, but no previous "
+                    "conversation context is available."
+                )
+
+            previous_plan = context.get("previous_plan", {})
+
+            if previous_plan.get("dataset") != "canonical_retail":
+                raise PlannerError(
+                    "Previous conversation context is not supported."
+                )
+
+            return QueryPlan(
+                intent="aggregate",
+                dataset="canonical_retail",
+                filters=[
+                    {
+                        "field": "store_region",
+                        "op": "eq",
+                        "value": "East",
+                    }
+                ],
+                group_by=["category_normalized"],
+                metrics=[
+                    {
+                        "agg": "sum",
+                        "field": "revenue",
+                        "as": "sales",
+                    }
+                ],
+                sort=[
+                    {
+                        "field": "sales",
+                        "dir": "desc",
+                    }
+                ],
+                limit=10,
+            )
+
+        raise PlannerError(f"Unsupported question: {question}")
 
 
 def plan_to_json(plan: QueryPlan) -> str:
-    """Serialize a query plan using its public JSON field aliases."""
     return json.dumps(
         plan.model_dump(by_alias=True),
         indent=2,

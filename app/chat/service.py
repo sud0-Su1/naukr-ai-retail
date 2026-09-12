@@ -7,6 +7,7 @@ import pandas as pd
 from app.chat.evidence import build_evidence
 from app.chat.executor import execute_query
 from app.chat.llm_planner import OllamaPlanner
+from app.chat.session import ChatSession
 from app.chat.validator import validate_query_plan
 
 
@@ -14,93 +15,107 @@ class ChatService:
     """
     Common production chat pipeline.
 
-    The planner can be injected so tests/evaluation can use a deterministic
-    planner while still exercising the same validation, execution, and
-    evidence pipeline as the application.
+    The planner receives bounded context from the previous turn so that
+    follow-up questions can be interpreted as part of the conversation.
+
+    The resulting plan is still validated before execution.
     """
 
     def __init__(
         self,
         planner=None,
         dataset_path: str | Path = "data/cleaned/canonical_retail.csv",
+        session: ChatSession | None = None,
     ):
         self.planner = planner or OllamaPlanner()
         self.dataset_path = Path(dataset_path)
+        self.session = session or ChatSession("default-session")
+
+    def _plan(self, question: str):
+        """
+        Ask the planner to interpret the question using bounded session
+        context when the planner supports it.
+
+        Backward compatibility is retained for existing planners whose
+        plan() method accepts only the question.
+        """
+        context = self.session.context()
+
+        try:
+            return self.planner.plan(
+                question,
+                context=context,
+            )
+        except TypeError:
+            # Existing/mock planners may only accept plan(question).
+            return self.planner.plan(question)
 
     def answer(self, question: str) -> dict:
         question = question.strip()
 
         if not question:
-            return {
+            response = {
                 "status": "error",
                 "error_type": "empty_question",
                 "message": "Question cannot be empty.",
             }
+            self.session.add_turn(question, response)
+            return response
 
-        # ---------------------------------------------------------
-        # 1. Planning
-        # ---------------------------------------------------------
         try:
-            plan = self.planner.plan(question)
+            plan = self._plan(question)
         except Exception as exc:
-            return {
+            response = {
                 "status": "error",
                 "error_type": "planner_failure",
                 "message": str(exc),
             }
+            self.session.add_turn(question, response)
+            return response
 
-        # ---------------------------------------------------------
-        # 2. Load dataset
-        # ---------------------------------------------------------
         try:
             df = pd.read_csv(self.dataset_path)
         except Exception as exc:
-            return {
+            response = {
                 "status": "error",
                 "error_type": "dataset_failure",
                 "message": str(exc),
             }
+            self.session.add_turn(question, response)
+            return response
 
-        # ---------------------------------------------------------
-        # 3. Validate plan
-        # ---------------------------------------------------------
         try:
             validation = validate_query_plan(plan)
         except ValueError as exc:
-            return {
+            response = {
                 "status": "error",
                 "error_type": "invalid_plan",
                 "message": str(exc),
                 "plan": plan.model_dump(),
             }
+            self.session.add_turn(question, response)
+            return response
 
-        # ---------------------------------------------------------
-        # 4. Execute validated plan
-        # ---------------------------------------------------------
         try:
             result, trace = execute_query(df, plan)
         except Exception as exc:
-            return {
+            response = {
                 "status": "error",
                 "error_type": "execution_failure",
                 "message": str(exc),
                 "plan": plan.model_dump(),
                 "validation": validation,
             }
+            self.session.add_turn(question, response)
+            return response
 
-        # ---------------------------------------------------------
-        # 5. Build evidence
-        # ---------------------------------------------------------
         evidence = build_evidence(
             plan=plan,
             result=result,
             execution_trace=trace,
         )
 
-        # ---------------------------------------------------------
-        # 6. Return grounded result
-        # ---------------------------------------------------------
-        return {
+        response = {
             "status": "ok",
             "question": question,
             "plan": plan.model_dump(),
@@ -108,3 +123,7 @@ class ChatService:
             "result": result.to_dict(orient="records"),
             "evidence": evidence,
         }
+
+        self.session.add_turn(question, response)
+
+        return response
