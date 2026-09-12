@@ -2,28 +2,65 @@ from __future__ import annotations
 
 import json
 
-
 from app.chat.models import QueryPlan
 
 
 class PlannerError(Exception):
-    """Raised when a planner cannot produce a valid plan."""
+    """Raised when the planner cannot produce a supported query plan."""
 
 
 class MockPlanner:
     """
-    Deterministic planner for local development and evaluation.
+    Deterministic planner used for tests/evaluation.
 
-    This keeps the application usable without an external LLM.
+    This deliberately supports a small set of known retail questions so
+    evaluation does not depend on an external LLM.
     """
 
     def plan(self, question: str) -> QueryPlan:
-        normalized = question.strip().lower()
+        q = question.strip().lower()
 
+        # ---------------------------------------------------------
+        # 1. Highest revenue category in the West
+        # ---------------------------------------------------------
         if (
-            "highest revenue" in normalized
-            and "west" in normalized
-            and "category" in normalized
+            "highest revenue" in q
+            and "west" in q
+            and "category" in q
+        ):
+            return QueryPlan(
+                intent="top_n",
+                dataset="canonical_retail",
+                filters=[
+                    {
+                        "field": "store_region",
+                        "op": "eq",
+                        "value": "West",
+                    }
+                ],
+                group_by=["category_normalized"],
+                metrics=[
+                    {
+                        "agg": "sum",
+                        "field": "revenue",
+                        "as": "sales",
+                    }
+                ],
+                sort=[
+                    {
+                        "field": "sales",
+                        "dir": "desc",
+                    }
+                ],
+                limit=10,
+            )
+
+        # ---------------------------------------------------------
+        # 2. Revenue by category in the West
+        # ---------------------------------------------------------
+        if (
+            "revenue by category" in q
+            and "west" in q
         ):
             return QueryPlan(
                 intent="aggregate",
@@ -35,9 +72,7 @@ class MockPlanner:
                         "value": "West",
                     }
                 ],
-                group_by=[
-                    "category_normalized"
-                ],
+                group_by=["category_normalized"],
                 metrics=[
                     {
                         "agg": "sum",
@@ -55,18 +90,13 @@ class MockPlanner:
             )
 
         raise PlannerError(
-            "Mock planner does not support this question."
+            f"Mock planner does not support this question: {question}"
         )
 
 
 def plan_to_json(plan: QueryPlan) -> str:
-    """
-    Serialize a validated QueryPlan for logging/debugging.
-    """
+    """Serialize a query plan using its public JSON field aliases."""
     return json.dumps(
-        plan.model_dump(
-            by_alias=True
-        ),
+        plan.model_dump(by_alias=True),
         indent=2,
-        ensure_ascii=False,
     )

@@ -1,103 +1,110 @@
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
 
 import pandas as pd
 
 from app.chat.evidence import build_evidence
 from app.chat.executor import execute_query
-from app.chat.llm_planner import OllamaPlanner, OllamaPlannerError
+from app.chat.llm_planner import OllamaPlanner
 from app.chat.validator import validate_query_plan
 
 
 class ChatService:
+    """
+    Common production chat pipeline.
+
+    The planner can be injected so tests/evaluation can use a deterministic
+    planner while still exercising the same validation, execution, and
+    evidence pipeline as the application.
+    """
+
     def __init__(
         self,
-        dataset_path: str = "data/cleaned/canonical_retail.csv",
+        planner=None,
+        dataset_path: str | Path = "data/cleaned/canonical_retail.csv",
     ):
-        self.dataset_path = dataset_path
-        self.df = pd.read_csv(dataset_path)
-        self.planner = OllamaPlanner()
+        self.planner = planner or OllamaPlanner()
+        self.dataset_path = Path(dataset_path)
 
-    def answer(self, question: str) -> dict[str, Any]:
+    def answer(self, question: str) -> dict:
         question = question.strip()
 
         if not question:
             return {
                 "status": "error",
                 "error_type": "empty_question",
-                "message": "Please provide a question.",
+                "message": "Question cannot be empty.",
             }
 
-        # -------------------------
-        # 1. Planner
-        # -------------------------
+        # ---------------------------------------------------------
+        # 1. Planning
+        # ---------------------------------------------------------
         try:
             plan = self.planner.plan(question)
-        except OllamaPlannerError as exc:
+        except Exception as exc:
             return {
                 "status": "error",
                 "error_type": "planner_failure",
-                "message": (
-                    "I couldn't safely translate that question "
-                    "into a supported data query."
-                ),
-                "details": str(exc),
+                "message": str(exc),
             }
 
-        # -------------------------
-        # 2. Plan validation
-        # -------------------------
+        # ---------------------------------------------------------
+        # 2. Load dataset
+        # ---------------------------------------------------------
+        try:
+            df = pd.read_csv(self.dataset_path)
+        except Exception as exc:
+            return {
+                "status": "error",
+                "error_type": "dataset_failure",
+                "message": str(exc),
+            }
+
+        # ---------------------------------------------------------
+        # 3. Validate plan
+        # ---------------------------------------------------------
         try:
             validation = validate_query_plan(plan)
         except ValueError as exc:
             return {
                 "status": "error",
                 "error_type": "invalid_plan",
-                "message": (
-                    "The generated query was rejected by "
-                    "the safety validator."
-                ),
-                "details": str(exc),
+                "message": str(exc),
+                "plan": plan.model_dump(),
             }
 
-        # -------------------------
-        # 3. Execution
-        # -------------------------
+        # ---------------------------------------------------------
+        # 4. Execute validated plan
+        # ---------------------------------------------------------
         try:
-            result, trace = execute_query(
-                self.df,
-                plan,
-            )
-        except (ValueError, KeyError, TypeError) as exc:
+            result, trace = execute_query(df, plan)
+        except Exception as exc:
             return {
                 "status": "error",
                 "error_type": "execution_failure",
-                "message": (
-                    "I couldn't execute a safe computation "
-                    "for that question."
-                ),
-                "details": str(exc),
+                "message": str(exc),
+                "plan": plan.model_dump(),
+                "validation": validation,
             }
 
-        # -------------------------
-        # 4. Evidence
-        # -------------------------
+        # ---------------------------------------------------------
+        # 5. Build evidence
+        # ---------------------------------------------------------
         evidence = build_evidence(
-            plan,
-            result,
-            trace,
+            plan=plan,
+            result=result,
+            execution_trace=trace,
         )
 
+        # ---------------------------------------------------------
+        # 6. Return grounded result
+        # ---------------------------------------------------------
         return {
             "status": "ok",
             "question": question,
-            "plan": plan.model_dump(
-                by_alias=True
-            ),
+            "plan": plan.model_dump(),
             "validation": validation,
-            "result": result.to_dict(
-                orient="records"
-            ),
+            "result": result.to_dict(orient="records"),
             "evidence": evidence,
         }
