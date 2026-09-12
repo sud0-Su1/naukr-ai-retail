@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.chat.planner import MockPlanner
 from app.chat.service import ChatService
+from app.chat.session import ChatSession
 from app.cleaning.cleaner import clean_orders
 from app.cleaning.detector import detect_issues
 from app.cleaning.planner import build_cleaning_plan
@@ -41,7 +42,7 @@ def evaluate_cleaning_case(case: dict, artifacts_dir: Path) -> dict:
     validation = validate_cleaning(
         before,
         cleaned,
-        applied_plan,
+        unresolved_issues=[],
     )
 
     idempotent = check_idempotency(
@@ -100,7 +101,6 @@ def evaluate_chat_case(case: dict, artifacts_dir: Path) -> dict:
     response = service.answer(case["question"])
 
     expected = case.get("expected", {})
-
     checks = {}
 
     expected_status = expected.get("status")
@@ -140,12 +140,38 @@ def evaluate_chat_case(case: dict, artifacts_dir: Path) -> dict:
             )
 
     # ---------------------------------------------------------
-    # Expected planner failure / refusal
+    # Expected clarification
     # ---------------------------------------------------------
-    if expected.get("status") == "error":
+    if expected_status == "clarification":
+        if "clarification_question" in expected:
+            checks["clarification_question"] = (
+                response.get("message")
+                == expected["clarification_question"]
+            )
+
+        if "options" in expected:
+            checks["options"] = (
+                response.get("options")
+                == expected["options"]
+            )
+
+    # ---------------------------------------------------------
+    # Expected refusal
+    # ---------------------------------------------------------
+    if expected_status == "refusal":
+        if "reason" in expected:
+            checks["refusal_reason"] = (
+                response.get("reason")
+                == expected["reason"]
+            )
+
+    # ---------------------------------------------------------
+    # Expected planner/application error
+    # ---------------------------------------------------------
+    if expected_status == "error":
         checks["error_present"] = response["status"] == "error"
 
-    case_status = "ok" if all(checks.values()) else "failed"
+    case_status = "ok" if checks and all(checks.values()) else "failed"
 
     artifact = {
         "case_id": case["id"],
@@ -165,6 +191,118 @@ def evaluate_chat_case(case: dict, artifacts_dir: Path) -> dict:
 
     return artifact
 
+def evaluate_multi_turn_chat_case(
+    case: dict,
+    artifacts_dir: Path,
+) -> dict:
+    """
+    Evaluate a multi-turn conversation through one persistent ChatService.
+
+    The same service/session is reused across all turns so follow-up
+    questions can inherit the previous analytical context.
+    """
+
+    session_id = case.get("session_id", case["id"])
+
+    # Always start the evaluator with a fresh session.
+    # This prevents previous evaluator runs from contaminating
+    # the current multi-turn test.
+    service = ChatService(
+        planner=MockPlanner(),
+        dataset_path="data/cleaned/canonical_retail.csv",
+        session=ChatSession(session_id),
+    )
+
+    turn_results = []
+
+    try:
+        for question in case["questions"]:
+            response = service.answer(question)
+
+            turn_results.append({
+                "question": question,
+                "response": response,
+            })
+
+        expected = case.get("expected", {})
+        checks = {}
+
+        if "turn_count" in expected:
+            checks["turn_count"] = (
+                len(turn_results) == expected["turn_count"]
+            )
+
+        if "final_status" in expected:
+            checks["final_status"] = (
+                turn_results[-1]["response"]["status"]
+                == expected["final_status"]
+            )
+
+        if "final_region" in expected:
+            final_response = turn_results[-1]["response"]
+            filters = final_response.get("plan", {}).get(
+                "filters",
+                [],
+            )
+
+            checks["final_region"] = any(
+                item.get("field") == "store_region"
+                and item.get("value") == expected["final_region"]
+                for item in filters
+            )
+
+        if "final_result_rows" in expected:
+            checks["final_result_rows"] = (
+                len(
+                    turn_results[-1]["response"].get(
+                        "result",
+                        [],
+                    )
+                )
+                == expected["final_result_rows"]
+            )
+
+        case_status = (
+            "ok"
+            if checks and all(checks.values())
+            else "failed"
+        )
+
+        artifact = {
+            "case_id": case["id"],
+            "type": "chat_multi_turn",
+            "status": case_status,
+            "checks": checks,
+            "turns": turn_results,
+            "session": {
+                "session_id": service.session.session_id,
+                "turn_count": len(service.session.turns),
+            },
+        }
+
+    except Exception as exc:
+        artifact = {
+            "case_id": case["id"],
+            "type": "chat_multi_turn",
+            "status": "failed",
+            "checks": {},
+            "turns": turn_results,
+            "error_type": type(exc).__name__,
+            "message": str(exc),
+        }
+
+    case_artifact = artifacts_dir / f"{case['id']}.json"
+
+    case_artifact.write_text(
+        json.dumps(
+            artifact,
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    return artifact
 
 def evaluate_case(case: dict, artifacts_dir: Path) -> dict:
     try:
@@ -176,6 +314,12 @@ def evaluate_case(case: dict, artifacts_dir: Path) -> dict:
 
         if case["type"] == "chat":
             return evaluate_chat_case(
+                case,
+                artifacts_dir,
+            )
+
+        if case["type"] == "chat_multi_turn":
+            return evaluate_multi_turn_chat_case(
                 case,
                 artifacts_dir,
             )

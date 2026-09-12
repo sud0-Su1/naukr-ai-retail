@@ -49,4 +49,10 @@ def test_evaluation_files_can_be_created(
     assert "summary" in data
     assert "artifacts" in data
 
-    assert data["summary"]["total"] == 4
+    expected_cases = json.loads(
+        input_file.read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert data["summary"]["total"] == len(expected_cases)

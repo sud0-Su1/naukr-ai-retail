@@ -1,57 +1,54 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from app.chat.evidence import build_evidence
-from app.chat.models import ClarificationRequest, RefusalRequest
 from app.chat.executor import execute_query
 from app.chat.llm_planner import OllamaPlanner
+from app.chat.planner import PlannerError
 from app.chat.session import ChatSession
+from app.chat.session_store import ChatSessionStore
 from app.chat.validator import validate_query_plan
 
 
 class ChatService:
-    """
-    Common production chat pipeline.
-
-    The planner receives bounded context from the previous turn so that
-    follow-up questions can be interpreted as part of the conversation.
-
-    The resulting plan is still validated before execution.
-    """
-
     def __init__(
         self,
-        planner=None,
+        planner: Any | None = None,
         dataset_path: str | Path = "data/cleaned/canonical_retail.csv",
         session: ChatSession | None = None,
+        session_store: ChatSessionStore | None = None,
+        session_id: str = "default-session",
     ):
         self.planner = planner or OllamaPlanner()
         self.dataset_path = Path(dataset_path)
-        self.session = session or ChatSession("default-session")
+
+        self.session_store = session_store or ChatSessionStore()
+
+        if session is not None:
+            self.session = session
+        elif self.session_store.exists(session_id):
+            self.session = self.session_store.load(session_id)
+        else:
+            self.session = ChatSession(session_id)
+
+    def _save_session(self) -> None:
+        self.session_store.save(self.session)
 
     def _plan(self, question: str):
-        """
-        Ask the planner to interpret the question using bounded session
-        context when the planner supports it.
-
-        Backward compatibility is retained for existing planners whose
-        plan() method accepts only the question.
-        """
         context = self.session.context()
 
         try:
-            return self.planner.plan(
-                question,
-                context=context,
-            )
+            return self.planner.plan(question, context=context)
         except TypeError:
-            # Existing/mock planners may only accept plan(question).
+            # Backward compatibility for simple/mock planners
+            # that only accept the question argument.
             return self.planner.plan(question)
 
-    def answer(self, question: str) -> dict:
+    def answer(self, question: str) -> dict[str, Any]:
         question = question.strip()
 
         if not question:
@@ -62,10 +59,11 @@ class ChatService:
                 "message": "Question cannot be empty.",
             }
             self.session.add_turn(question, response)
+            self._save_session()
             return response
 
         try:
-            plan = self._plan(question)
+            planned = self._plan(question)
         except Exception as exc:
             response = {
                 "status": "error",
@@ -74,26 +72,31 @@ class ChatService:
                 "message": str(exc),
             }
             self.session.add_turn(question, response)
+            self._save_session()
             return response
 
-        if isinstance(plan, ClarificationRequest):
+        # Clarification is part of the conversation state.
+        if hasattr(planned, "type") and planned.type == "clarification":
             response = {
                 "status": "clarification",
                 "question": question,
-                "message": plan.question,
-                "options": plan.options,
+                "message": planned.question,
+                "options": planned.options,
             }
             self.session.add_turn(question, response)
+            self._save_session()
             return response
 
-        if isinstance(plan, RefusalRequest):
+        # Unsupported requests are explicitly refused.
+        if hasattr(planned, "type") and planned.type == "refusal":
             response = {
                 "status": "refusal",
                 "question": question,
-                "message": plan.message,
-                "reason": plan.reason,
+                "message": planned.message,
+                "reason": planned.reason,
             }
             self.session.add_turn(question, response)
+            self._save_session()
             return response
 
         try:
@@ -106,50 +109,54 @@ class ChatService:
                 "message": str(exc),
             }
             self.session.add_turn(question, response)
+            self._save_session()
             return response
 
         try:
-            validation = validate_query_plan(plan)
-        except ValueError as exc:
+            validation = validate_query_plan(planned)
+        except Exception as exc:
             response = {
                 "status": "error",
                 "question": question,
                 "error_type": "invalid_plan",
                 "message": str(exc),
-                "plan": plan.model_dump(by_alias=True),
             }
             self.session.add_turn(question, response)
+            self._save_session()
             return response
 
         try:
-            result, trace = execute_query(df, plan)
+            result, execution_trace = execute_query(
+                df,
+                planned,
+            )
         except Exception as exc:
             response = {
                 "status": "error",
                 "question": question,
                 "error_type": "execution_failure",
                 "message": str(exc),
-                "plan": plan.model_dump(by_alias=True),
-                "validation": validation,
             }
             self.session.add_turn(question, response)
+            self._save_session()
             return response
 
         evidence = build_evidence(
-            plan=plan,
+            plan=planned,
             result=result,
-            execution_trace=trace,
+            execution_trace=execution_trace,
         )
 
         response = {
             "status": "ok",
             "question": question,
-            "plan": plan.model_dump(by_alias=True),
+            "plan": planned.model_dump(by_alias=True),
             "validation": validation,
             "result": result.to_dict(orient="records"),
             "evidence": evidence,
         }
 
         self.session.add_turn(question, response)
+        self._save_session()
 
         return response

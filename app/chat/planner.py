@@ -50,33 +50,14 @@ class MockPlanner:
                 ],
             )
 
-        if normalized == "which category generated the highest revenue in the west?":
-            return QueryPlan(
-                intent="top_n",
-                dataset="canonical_retail",
-                filters=[
-                    {
-                        "field": "store_region",
-                        "op": "eq",
-                        "value": "West",
-                    }
-                ],
-                group_by=["category_normalized"],
-                metrics=[
-                    {
-                        "agg": "sum",
-                        "field": "revenue",
-                        "as": "sales",
-                    }
-                ],
-                sort=[
-                    {
-                        "field": "sales",
-                        "dir": "desc",
-                    }
-                ],
-                limit=1,
-            )
+        if normalized in {
+            "what is the top category by revenue in the west?",
+            "which category generated the highest revenue in the west?",
+        }:
+            return self._category_revenue_plan("desc")
+
+        if normalized == "what category has the lowest revenue in the west?":
+            return self._category_revenue_plan("asc")
 
         if normalized == "show revenue by category in the west.":
             return QueryPlan(
@@ -148,6 +129,37 @@ class MockPlanner:
             )
 
         raise PlannerError(f"Unsupported question: {question}")
+
+    @staticmethod
+    def _category_revenue_plan(
+        direction: str,
+    ) -> QueryPlan:
+        return QueryPlan(
+            intent="top_n",
+            dataset="canonical_retail",
+            filters=[
+                {
+                    "field": "store_region",
+                    "op": "eq",
+                    "value": "West",
+                }
+            ],
+            group_by=["category_normalized"],
+            metrics=[
+                {
+                    "agg": "sum",
+                    "field": "revenue",
+                    "as": "sales",
+                }
+            ],
+            sort=[
+                {
+                    "field": "sales",
+                    "dir": direction,
+                }
+            ],
+            limit=1,
+        )
 
 
 def plan_to_json(plan: QueryPlan) -> str:

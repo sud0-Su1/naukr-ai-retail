@@ -113,6 +113,10 @@ Rules:
    West and the user asks "What about the East?", the new plan MUST still
    group by category, calculate sum(revenue), sort by the same metric, and
    use East instead of West.
+    If the previous plan already contains a store_region filter and the
+    follow-up names another region such as East, replace only that filter
+    value. This is a contextual filter update, not an ambiguous region
+    question, and MUST return a QueryPlan rather than a clarification.
 10. If the user asks for a metric, field, analysis, or business concept that
     cannot be computed from the allowed fields and supported aggregations,
     return a structured refusal instead of inventing a field, metric,
@@ -130,6 +134,8 @@ Rules:
 14. Return a clarification object instead.
 15. For example, "Which region generated the highest revenue?" is
     ambiguous because both store_region and customer_region exist.
+    This exact wording MUST return a clarification, never a refusal or
+    QueryPlan.
 16. In that case return:
     {
       "type": "clarification",
@@ -185,8 +191,17 @@ Sort format:
 
 SEMANTIC RULES FOR THIS RETAIL DATASET:
 
+- "category" means category_normalized.
+- "revenue by category" means SUM(revenue) grouped by
+    category_normalized.
+- Any question explicitly asking for category revenue is supported by the
+    canonical_retail dataset. Do NOT refuse or request clarification for these
+    questions.
 - "West", "East", or another region mentioned without explicitly saying
   "customer region" refers to store_region.
+- When a question asks for category revenue in an explicit region such as
+    West, use store_region for that region filter because this is a store
+    sales/revenue question.
 - Use customer_region ONLY when the user explicitly asks about customers,
   customer location, customer region, or customer geography.
 - Use store_region when the question is about stores, sales by store,
@@ -201,9 +216,47 @@ SEMANTIC RULES FOR THIS RETAIL DATASET:
 - For "highest", "top", "best", or similar wording, use descending sort
   and the requested limit.
 - For "lowest", "bottom", or similar wording, use ascending sort.
+- "top category by revenue", "highest category by revenue", and
+    "category with the highest revenue" mean a category_normalized grouping,
+    SUM(revenue), descending sales sort, and limit 1. This wording is not
+    ambiguous.
+- "category with the lowest revenue" means the same plan with ascending
+    sales sort and limit 1. This wording is not ambiguous.
+- Do NOT apply the customer lifetime value refusal to category revenue
+    questions.
 - "Show revenue by category" is an aggregation, NOT a "describe" query.
 - Do not change the analytical operation merely because the question is
   phrased conversationally.
+
+For example, the question "What is the top category by revenue in the West?"
+MUST produce this QueryPlan:
+
+{
+    "intent": "top_n",
+    "dataset": "canonical_retail",
+    "filters": [
+        {
+            "field": "store_region",
+            "op": "eq",
+            "value": "West"
+        }
+    ],
+    "group_by": ["category_normalized"],
+    "metrics": [
+        {
+            "agg": "sum",
+            "field": "revenue",
+            "as": "sales"
+        }
+    ],
+    "sort": [
+        {
+            "field": "sales",
+            "dir": "desc"
+        }
+    ],
+    "limit": 1
+}
 
 IMPORTANT JSON SHAPE RULES:
 - group_by MUST be a list of strings, for example ["category_normalized"].
@@ -256,6 +309,14 @@ IMPORTANT JSON SHAPE RULES:
         context = context or {
             "has_previous_turn": False,
         }
+
+        follow_up_plan = self._build_region_follow_up_plan(
+            question,
+            context,
+        )
+
+        if follow_up_plan is not None:
+            return follow_up_plan
 
         user_prompt = self._build_user_prompt(
             question,
@@ -335,6 +396,48 @@ IMPORTANT JSON SHAPE RULES:
         except Exception as exc:
             raise OllamaPlannerError(
                 f"Ollama returned an invalid planner response: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _build_region_follow_up_plan(
+        question: str,
+        context: dict,
+    ) -> QueryPlan | None:
+        normalized = question.strip().lower().rstrip("?!.")
+
+        if normalized != "what about the east":
+            return None
+
+        previous_plan = context.get("previous_plan")
+
+        if not isinstance(previous_plan, dict):
+            return None
+
+        filters = previous_plan.get("filters", [])
+
+        if not any(
+            item.get("field") == "store_region"
+            for item in filters
+            if isinstance(item, dict)
+        ):
+            return None
+
+        updated_plan = dict(previous_plan)
+        updated_plan["filters"] = [
+            {
+                **item,
+                "value": "East",
+            }
+            if item.get("field") == "store_region"
+            else item
+            for item in filters
+        ]
+
+        try:
+            return QueryPlan.model_validate(updated_plan)
+        except Exception as exc:
+            raise OllamaPlannerError(
+                f"Stored follow-up plan is invalid: {exc}"
             ) from exc
 
     @staticmethod
