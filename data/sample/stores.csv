@@ -1,0 +1,5 @@
+store_id,store_name,region,city
+S001, Mumbai Central ,West,Mumbai
+S002,Delhi Main,NORTH, Delhi 
+S003,Bangalore Store,South,Bengaluru
+S004,Kolkata Hub,East,Kolkata

@@ -1,0 +1,6 @@
+product_id,sku,product_name,category,brand,price,cost
+P001, sku-001 ,Classic T-Shirt,T-Shirt, Nike,1299,700
+P002,SKU-002,Running Shoes, footwear ,Adidas ,"2,499",1500
+P003,sku-003,Polo Tee,tee,nike,999,500
+P004,SKU-004,Denim Jeans,Jeans, Levi's,1999,1100
+P005,SKU-005,Hoodie,Hoodies,Puma,₹1799,950
