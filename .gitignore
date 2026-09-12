@@ -8,3 +8,19 @@ data/cleaned/*
 artifacts/*
 
 !.gitkeep
+# Generated evaluation outputs
+results.json
+evaluation/results.json
+evaluation_output/*
+!evaluation_output/.gitkeep
+
+# Runtime artifacts
+artifacts/chat_sessions/*
+!artifacts/chat_sessions/.gitkeep
+
+# Runtime data generated from API runs
+data/raw/*
+!data/raw/.gitkeep
+
+data/cleaned/*
+!data/cleaned/.gitkeep

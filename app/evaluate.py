@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from app.chat.planner import MockPlanner
 from app.chat.service import ChatService
 from app.chat.session import ChatSession
@@ -11,6 +13,35 @@ from app.cleaning.cleaner import clean_orders
 from app.cleaning.detector import detect_issues
 from app.cleaning.planner import build_cleaning_plan
 from app.cleaning.validator import check_idempotency, validate_cleaning
+from app.retail.canonical import build_canonical_retail
+
+
+CANONICAL_DATASET = Path("data/cleaned/canonical_retail.csv")
+
+
+def ensure_evaluation_dataset() -> None:
+    """
+    Ensure the deterministic retail dataset required by chat evaluation
+    exists.
+
+    The canonical dataset is a generated runtime artifact and is ignored
+    by Git. A clean clone therefore rebuilds it automatically from the
+    tracked sample datasets before chat evaluation begins.
+    """
+    if CANONICAL_DATASET.exists():
+        return
+
+    CANONICAL_DATASET.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    canonical_df, _audit = build_canonical_retail()
+
+    canonical_df.to_csv(
+        CANONICAL_DATASET,
+        index=False,
+    )
 
 
 def load_cases(path: str | Path) -> list[dict]:
@@ -29,15 +60,21 @@ def load_cases(path: str | Path) -> list[dict]:
     )
 
 
-def evaluate_cleaning_case(case: dict, artifacts_dir: Path) -> dict:
+def evaluate_cleaning_case(
+    case: dict,
+    artifacts_dir: Path,
+) -> dict:
     input_path = Path(case["input"])
 
-    before = __import__("pandas").read_csv(input_path)
+    before = pd.read_csv(input_path)
 
     issues = detect_issues(before)
     plan = build_cleaning_plan(issues)
 
-    cleaned, applied_plan = clean_orders(before, plan)
+    cleaned, applied_plan = clean_orders(
+        before,
+        plan,
+    )
 
     validation = validate_cleaning(
         before,
@@ -79,14 +116,20 @@ def evaluate_cleaning_case(case: dict, artifacts_dir: Path) -> dict:
     }
 
     case_artifact.write_text(
-        json.dumps(artifact, indent=2),
+        json.dumps(
+            artifact,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
     return artifact
 
 
-def evaluate_chat_case(case: dict, artifacts_dir: Path) -> dict:
+def evaluate_chat_case(
+    case: dict,
+    artifacts_dir: Path,
+) -> dict:
     """
     Evaluate chat through the same ChatService pipeline used by the app.
 
@@ -95,7 +138,7 @@ def evaluate_chat_case(case: dict, artifacts_dir: Path) -> dict:
 
     service = ChatService(
         planner=MockPlanner(),
-        dataset_path="data/cleaned/canonical_retail.csv",
+        dataset_path=str(CANONICAL_DATASET),
     )
 
     response = service.answer(case["question"])
@@ -116,7 +159,9 @@ def evaluate_chat_case(case: dict, artifacts_dir: Path) -> dict:
 
         if "top_category" in expected:
             if result:
-                actual_category = result[0].get("category_normalized")
+                actual_category = result[0].get(
+                    "category_normalized"
+                )
                 checks["top_category"] = (
                     actual_category == expected["top_category"]
                 )
@@ -171,7 +216,11 @@ def evaluate_chat_case(case: dict, artifacts_dir: Path) -> dict:
     if expected_status == "error":
         checks["error_present"] = response["status"] == "error"
 
-    case_status = "ok" if checks and all(checks.values()) else "failed"
+    case_status = (
+        "ok"
+        if checks and all(checks.values())
+        else "failed"
+    )
 
     artifact = {
         "case_id": case["id"],
@@ -185,11 +234,15 @@ def evaluate_chat_case(case: dict, artifacts_dir: Path) -> dict:
     case_artifact = artifacts_dir / f"{case['id']}.json"
 
     case_artifact.write_text(
-        json.dumps(artifact, indent=2),
+        json.dumps(
+            artifact,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
     return artifact
+
 
 def evaluate_multi_turn_chat_case(
     case: dict,
@@ -202,14 +255,17 @@ def evaluate_multi_turn_chat_case(
     questions can inherit the previous analytical context.
     """
 
-    session_id = case.get("session_id", case["id"])
+    session_id = case.get(
+        "session_id",
+        case["id"],
+    )
 
     # Always start the evaluator with a fresh session.
     # This prevents previous evaluator runs from contaminating
     # the current multi-turn test.
     service = ChatService(
         planner=MockPlanner(),
-        dataset_path="data/cleaned/canonical_retail.csv",
+        dataset_path=str(CANONICAL_DATASET),
         session=ChatSession(session_id),
     )
 
@@ -219,17 +275,20 @@ def evaluate_multi_turn_chat_case(
         for question in case["questions"]:
             response = service.answer(question)
 
-            turn_results.append({
-                "question": question,
-                "response": response,
-            })
+            turn_results.append(
+                {
+                    "question": question,
+                    "response": response,
+                }
+            )
 
         expected = case.get("expected", {})
         checks = {}
 
         if "turn_count" in expected:
             checks["turn_count"] = (
-                len(turn_results) == expected["turn_count"]
+                len(turn_results)
+                == expected["turn_count"]
             )
 
         if "final_status" in expected:
@@ -240,14 +299,19 @@ def evaluate_multi_turn_chat_case(
 
         if "final_region" in expected:
             final_response = turn_results[-1]["response"]
-            filters = final_response.get("plan", {}).get(
+
+            filters = final_response.get(
+                "plan",
+                {},
+            ).get(
                 "filters",
                 [],
             )
 
             checks["final_region"] = any(
                 item.get("field") == "store_region"
-                and item.get("value") == expected["final_region"]
+                and item.get("value")
+                == expected["final_region"]
                 for item in filters
             )
 
@@ -304,7 +368,11 @@ def evaluate_multi_turn_chat_case(
 
     return artifact
 
-def evaluate_case(case: dict, artifacts_dir: Path) -> dict:
+
+def evaluate_case(
+    case: dict,
+    artifacts_dir: Path,
+) -> dict:
     try:
         if case["type"] == "cleaning":
             return evaluate_cleaning_case(
@@ -368,6 +436,10 @@ def main() -> None:
         exist_ok=True,
     )
 
+    # Build generated evaluation data before executing chat cases.
+    # This makes the evaluator reproducible from a clean clone.
+    ensure_evaluation_dataset()
+
     results = []
 
     for case in cases:
@@ -394,7 +466,9 @@ def main() -> None:
 
     artifact_files = [
         str(path)
-        for path in sorted(artifacts_dir.glob("*.json"))
+        for path in sorted(
+            artifacts_dir.glob("*.json")
+        )
     ]
 
     output = {
@@ -413,7 +487,10 @@ def main() -> None:
     )
 
     output_path.write_text(
-        json.dumps(output, indent=2),
+        json.dumps(
+            output,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
