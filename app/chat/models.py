@@ -91,3 +91,13 @@ class ClarificationRequest(BaseModel):
     type: Literal["clarification"] = "clarification"
     question: str
     options: list[str] = Field(min_length=2)
+
+
+class RefusalRequest(BaseModel):
+    """
+    Structured planner response when a question cannot be answered
+    from the available dataset or supported analytical capabilities.
+    """
+    type: Literal["refusal"] = "refusal"
+    message: str
+    reason: str

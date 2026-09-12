@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.chat.evidence import build_evidence
-from app.chat.models import ClarificationRequest
+from app.chat.models import ClarificationRequest, RefusalRequest
 from app.chat.executor import execute_query
 from app.chat.llm_planner import OllamaPlanner
 from app.chat.session import ChatSession
@@ -82,6 +82,16 @@ class ChatService:
                 "question": question,
                 "message": plan.question,
                 "options": plan.options,
+            }
+            self.session.add_turn(question, response)
+            return response
+
+        if isinstance(plan, RefusalRequest):
+            response = {
+                "status": "refusal",
+                "question": question,
+                "message": plan.message,
+                "reason": plan.reason,
             }
             self.session.add_turn(question, response)
             return response

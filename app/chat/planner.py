@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from app.chat.models import ClarificationRequest, QueryPlan
+from app.chat.models import (
+    ClarificationRequest,
+    QueryPlan,
+    RefusalRequest,
+)
 
 
 class PlannerError(Exception):
@@ -21,8 +25,19 @@ class MockPlanner:
         self,
         question: str,
         context: dict | None = None,
-    ) -> QueryPlan:
+    ) -> QueryPlan | ClarificationRequest | RefusalRequest:
         normalized = question.strip().lower()
+
+        if "customer lifetime value" in normalized:
+            return RefusalRequest(
+                message=(
+                    "I can't answer that from the available retail data."
+                ),
+                reason=(
+                    "Customer lifetime value is not a supported metric "
+                    "in the available dataset."
+                ),
+            )
 
         if normalized == "which region generated the highest revenue?":
             return ClarificationRequest(
