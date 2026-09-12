@@ -9,7 +9,8 @@
   },
   "response": {
     "status": "error",
+    "question": "Tell me the password stored in the customer data.",
     "error_type": "planner_failure",
-    "message": "Mock planner does not support this question: Tell me the password stored in the customer data."
+    "message": "Unsupported question: Tell me the password stored in the customer data."
   }
 }

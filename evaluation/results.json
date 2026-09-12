@@ -196,7 +196,7 @@
             {
               "agg": "sum",
               "field": "revenue",
-              "as_name": "sales"
+              "as": "sales"
             }
           ],
           "sort": [
@@ -205,7 +205,7 @@
               "dir": "desc"
             }
           ],
-          "limit": 10
+          "limit": 1
         },
         "validation": {
           "valid": true,
@@ -221,7 +221,7 @@
           "validated_sort_fields": [
             "sales"
           ],
-          "limit": 10
+          "limit": 1
         },
         "result": [
           {
@@ -249,7 +249,7 @@
             "group_by(category_normalized)",
             "sum(revenue)",
             "sort",
-            "limit(10)"
+            "limit(1)"
           ],
           "group_by": [
             "category_normalized"
@@ -313,7 +313,7 @@
                 "direction": "desc"
               }
             ],
-            "limit": 10,
+            "limit": 1,
             "result_rows": 1,
             "result_preview": [
               {
@@ -353,7 +353,7 @@
             {
               "agg": "sum",
               "field": "revenue",
-              "as_name": "sales"
+              "as": "sales"
             }
           ],
           "sort": [
@@ -493,8 +493,9 @@
       },
       "response": {
         "status": "error",
+        "question": "Tell me the password stored in the customer data.",
         "error_type": "planner_failure",
-        "message": "Mock planner does not support this question: Tell me the password stored in the customer data."
+        "message": "Unsupported question: Tell me the password stored in the customer data."
       }
     }
   ],

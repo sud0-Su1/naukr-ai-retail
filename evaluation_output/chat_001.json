@@ -27,7 +27,7 @@
         {
           "agg": "sum",
           "field": "revenue",
-          "as_name": "sales"
+          "as": "sales"
         }
       ],
       "sort": [
@@ -36,7 +36,7 @@
           "dir": "desc"
         }
       ],
-      "limit": 10
+      "limit": 1
     },
     "validation": {
       "valid": true,
@@ -52,7 +52,7 @@
       "validated_sort_fields": [
         "sales"
       ],
-      "limit": 10
+      "limit": 1
     },
     "result": [
       {
@@ -80,7 +80,7 @@
         "group_by(category_normalized)",
         "sum(revenue)",
         "sort",
-        "limit(10)"
+        "limit(1)"
       ],
       "group_by": [
         "category_normalized"
@@ -144,7 +144,7 @@
             "direction": "desc"
           }
         ],
-        "limit": 10,
+        "limit": 1,
         "result_rows": 1,
         "result_preview": [
           {

@@ -56,6 +56,7 @@ class ChatService:
         if not question:
             response = {
                 "status": "error",
+                "question": question,
                 "error_type": "empty_question",
                 "message": "Question cannot be empty.",
             }
@@ -67,6 +68,7 @@ class ChatService:
         except Exception as exc:
             response = {
                 "status": "error",
+                "question": question,
                 "error_type": "planner_failure",
                 "message": str(exc),
             }
@@ -78,6 +80,7 @@ class ChatService:
         except Exception as exc:
             response = {
                 "status": "error",
+                "question": question,
                 "error_type": "dataset_failure",
                 "message": str(exc),
             }
@@ -89,9 +92,10 @@ class ChatService:
         except ValueError as exc:
             response = {
                 "status": "error",
+                "question": question,
                 "error_type": "invalid_plan",
                 "message": str(exc),
-                "plan": plan.model_dump(),
+                "plan": plan.model_dump(by_alias=True),
             }
             self.session.add_turn(question, response)
             return response
@@ -101,9 +105,10 @@ class ChatService:
         except Exception as exc:
             response = {
                 "status": "error",
+                "question": question,
                 "error_type": "execution_failure",
                 "message": str(exc),
-                "plan": plan.model_dump(),
+                "plan": plan.model_dump(by_alias=True),
                 "validation": validation,
             }
             self.session.add_turn(question, response)
@@ -118,7 +123,7 @@ class ChatService:
         response = {
             "status": "ok",
             "question": question,
-            "plan": plan.model_dump(),
+            "plan": plan.model_dump(by_alias=True),
             "validation": validation,
             "result": result.to_dict(orient="records"),
             "evidence": evidence,
