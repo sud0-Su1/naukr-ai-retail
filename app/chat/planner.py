@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.chat.models import QueryPlan
+from app.chat.models import ClarificationRequest, QueryPlan
 
 
 class PlannerError(Exception):
@@ -23,6 +23,17 @@ class MockPlanner:
         context: dict | None = None,
     ) -> QueryPlan:
         normalized = question.strip().lower()
+
+        if normalized == "which region generated the highest revenue?":
+            return ClarificationRequest(
+                question=(
+                    "Which region do you mean?"
+                ),
+                options=[
+                    "Store region",
+                    "Customer region",
+                ],
+            )
 
         if normalized == "which category generated the highest revenue in the west?":
             return QueryPlan(

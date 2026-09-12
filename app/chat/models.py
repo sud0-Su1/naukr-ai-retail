@@ -80,3 +80,14 @@ class QueryPlan(BaseModel):
         ge=1,
         le=100,
     )
+
+
+class ClarificationRequest(BaseModel):
+    """
+    Structured planner response when a question is ambiguous
+    and cannot be answered safely without clarification.
+    """
+
+    type: Literal["clarification"] = "clarification"
+    question: str
+    options: list[str] = Field(min_length=2)
